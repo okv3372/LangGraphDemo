@@ -1,0 +1,95 @@
+# LangGraph Demo
+
+This project contains three very small LangGraph examples plus one shared tools file:
+
+- `sequential_agent.py`
+- `parallel_agent.py`
+- `magentic_agent.py`
+- `langgraph_tools.py`
+
+The goal is to keep the code easy to read so you can quickly show:
+
+- how a graph is constructed
+- how tools are shared across agents
+- how a graph is run
+
+## Prerequisites
+
+- Python 3.10+
+- An Azure OpenAI deployment for chat completions
+
+## Setup
+
+Create and activate a virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Create a local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Update `.env` with your Azure OpenAI values:
+
+```env
+AZURE_OPENAI_API_KEY=your_azure_openai_api_key
+AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/
+AZURE_OPENAI_API_VERSION=2024-02-01
+AZURE_OPENAI_CHAT_DEPLOYMENT=your-chat-deployment-name
+```
+
+Load the environment variables into your shell:
+
+```bash
+set -a
+source .env
+set +a
+```
+
+## Run The Demos
+
+Run the sequential graph:
+
+```bash
+python3 sequential_agent.py
+```
+
+Run the parallel graph:
+
+```bash
+python3 parallel_agent.py
+```
+
+Run the magentic-style graph:
+
+```bash
+python3 magentic_agent.py
+```
+
+Each script uses the same sample topic:
+
+`LangGraph demo for business teams`
+
+If you want a different topic, edit the value in the `app.invoke(...)` call at the bottom of each file.
+
+## What Each File Shows
+
+- `sequential_agent.py`: a simple linear flow of `planner -> tool_step -> writer`
+- `parallel_agent.py`: three branches that run independently and merge into `combine`
+- `magentic_agent.py`: a coordinator delegates to two specialists, then finalizes the answer
+- `langgraph_tools.py`: shared local tools used by the graphs
+
+## Notes
+
+- The shared tools are intentionally simple local functions so the graph structure stays easy to follow.
+- The Azure model setup is repeated in each agent file on purpose so it is visible during the demo.
