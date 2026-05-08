@@ -48,13 +48,7 @@ AZURE_OPENAI_API_VERSION=2024-02-01
 AZURE_OPENAI_CHAT_DEPLOYMENT=your-chat-deployment-name
 ```
 
-Load the environment variables into your shell:
-
-```bash
-set -a
-source .env
-set +a
-```
+The scripts use `load_dotenv()` and will automatically read values from `.env`.
 
 ## Run The Demos
 
@@ -93,3 +87,4 @@ If you want a different topic, edit the value in the `app.invoke(...)` call at t
 
 - The shared tools are intentionally simple local functions so the graph structure stays easy to follow.
 - The Azure model setup is repeated in each agent file on purpose so it is visible during the demo.
+- Each script prints detailed step-by-step logs in the terminal so you can watch the graph execute live.
