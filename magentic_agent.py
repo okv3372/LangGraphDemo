@@ -1,33 +1,46 @@
+"""
+Magentic-style demo:
+1. A coordinator decides the next step.
+2. It can send work to a researcher or a planner.
+3. The researcher uses tools.
+4. The graph loops until the coordinator decides to finish.
+"""
+
 import os
-from typing import TypedDict
+from operator import add
+from typing import Annotated, TypedDict
 
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI
 from langgraph.graph import END, START, StateGraph
+from langgraph.prebuilt import ToolNode
 
 from langgraph_tools import (
-    format_slide_bullets,
+    get_audience_questions,
     get_demo_examples,
     get_topic_outline,
 )
 
 load_dotenv()
 
+TOPIC = "LangGraph demo for business teams"
+MAX_ROUNDS = 4
+RESEARCH_TOOLS = [get_topic_outline, get_demo_examples, get_audience_questions]
+NOTES = Annotated[list[str], add]
+
 
 class MagenticState(TypedDict, total=False):
     topic: str
+    round_count: int
+    next_step: str
     coordinator_note: str
-    research_brief: str
-    example_brief: str
+    research_messages: list
+    research_notes: NOTES
+    plan_notes: NOTES
     final_output: str
 
 
-def log(message: str) -> None:
-    print(f"[magentic] {message}", flush=True)
-
-
 def build_model() -> AzureChatOpenAI:
-    log("Checking Azure OpenAI environment variables.")
     required_env = [
         "AZURE_OPENAI_API_KEY",
         "AZURE_OPENAI_ENDPOINT",
@@ -38,7 +51,6 @@ def build_model() -> AzureChatOpenAI:
     if missing:
         raise ValueError(f"Missing environment variables: {', '.join(missing)}")
 
-    log("Creating AzureChatOpenAI client.")
     return AzureChatOpenAI(
         azure_deployment=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT"],
         api_version=os.environ["AZURE_OPENAI_API_VERSION"],
@@ -48,115 +60,220 @@ def build_model() -> AzureChatOpenAI:
     )
 
 
+def format_notes(notes: list[str] | None) -> str:
+    if not notes:
+        return "None yet."
+    return "\n\n".join(notes)
+
+
+def last_tool_outputs(messages: list) -> str:
+    outputs = []
+    for message in messages:
+        if message.__class__.__name__ == "ToolMessage":
+            outputs.append(f"{message.name}: {message.content}")
+    return "\n".join(outputs)
+
+
+def parse_coordinator_response(text: str) -> tuple[str, str]:
+    step = "finish"
+    note = text.strip()
+
+    for line in text.splitlines():
+        if line.upper().startswith("STEP:"):
+            step = line.split(":", 1)[1].strip().lower()
+        if line.upper().startswith("NOTE:"):
+            note = line.split(":", 1)[1].strip()
+
+    if step not in {"research", "plan", "finish"}:
+        step = "finish"
+
+    return step, note
+
+
 def coordinator(state: MagenticState) -> MagenticState:
-    log("Coordinator node started.")
-    log(f"Coordinator received topic: {state['topic']}")
+    round_number = state.get("round_count", 0) + 1
+    print(f"1️⃣🎯 Coordinator (round {round_number})")
+
+    if round_number > MAX_ROUNDS:
+        print("Max rounds reached. Finishing with current notes.")
+        return {
+            "round_count": round_number,
+            "next_step": "finish",
+            "coordinator_note": "We have enough information. Finish the answer.",
+        }
+
     model = build_model()
-    prompt = (
-        "You are a coordinator for a tiny multi-agent demo.\n"
-        f"Topic: {state['topic']}\n"
-        "Write one short note telling two specialists what to focus on."
+    response = model.invoke(
+        f"""
+        You are coordinating a small research workflow.
+
+        Topic: {state['topic']}
+        Round: {round_number} of {MAX_ROUNDS}
+
+        Research notes so far:
+        {format_notes(state.get('research_notes'))}
+
+        Plan notes so far:
+        {format_notes(state.get('plan_notes'))}
+
+        Choose the next step:
+        - research: gather more information
+        - plan: organize the information and identify gaps
+        - finish: stop when the work is complete
+
+        Reply in exactly this format:
+        STEP: research OR plan OR finish
+        NOTE: one short instruction for the next node
+        """.strip()
     )
-    log(f"Coordinator prompt:\n{prompt}")
-    response = model.invoke(prompt)
-    coordinator_note = str(response.content)
-    log(f"Coordinator response: {coordinator_note}")
-    return {"coordinator_note": coordinator_note}
+
+    step, note = parse_coordinator_response(str(response.content))
+    print("Coordinator decision:", step)
+    print("Coordinator note:", note)
+
+    return {
+        "round_count": round_number,
+        "next_step": step,
+        "coordinator_note": note,
+    }
 
 
-def research_specialist(state: MagenticState) -> MagenticState:
-    log("Research specialist started.")
-    model = build_model()
-    outline = get_topic_outline.invoke({"topic": state["topic"]})
-    log(f"Research specialist outline: {outline}")
-    prompt = f"""
-You are the research specialist.
-
-Coordinator note: {state['coordinator_note']}
-Topic: {state['topic']}
-Outline: {outline}
-
-Write two short bullets with the most important points.
-""".strip()
-    log(f"Research specialist prompt:\n{prompt}")
-    response = model.invoke(prompt)
-    research_brief = str(response.content)
-    log(f"Research specialist response:\n{research_brief}")
-    return {"research_brief": research_brief}
+def route_from_coordinator(state: MagenticState) -> str:
+    return state["next_step"]
 
 
-def examples_specialist(state: MagenticState) -> MagenticState:
-    log("Examples specialist started.")
-    model = build_model()
-    examples = get_demo_examples.invoke({"topic": state["topic"]})
-    log(f"Examples specialist examples: {examples}")
-    prompt = f"""
-You are the demo examples specialist.
+def researcher(state: MagenticState) -> MagenticState:
+    print("2️⃣🔎 Researcher")
+    model = build_model().bind_tools(RESEARCH_TOOLS, tool_choice="required")
 
-Coordinator note: {state['coordinator_note']}
-Topic: {state['topic']}
-Examples: {examples}
+    response = model.invoke(
+        f"""
+        Topic: {state['topic']}
+        Coordinator instruction: {state['coordinator_note']}
 
-Write two short bullets with the best demo examples.
-""".strip()
-    log(f"Examples specialist prompt:\n{prompt}")
-    response = model.invoke(prompt)
-    example_brief = str(response.content)
-    log(f"Examples specialist response:\n{example_brief}")
-    return {"example_brief": example_brief}
+        Research notes so far:
+        {format_notes(state.get('research_notes'))}
 
-
-def coordinator_finalize(state: MagenticState) -> MagenticState:
-    log("Coordinator finalize node started.")
-    model = build_model()
-    bullet_draft = format_slide_bullets.invoke(
-        {"items": [state["research_brief"], state["example_brief"]]}
+        Call one or more tools to gather the next useful information.
+        Do not write the final answer.
+        """.strip()
     )
-    log(f"Coordinator finalize combined specialist notes:\n{bullet_draft}")
-    prompt = f"""
-You are the coordinator writing the final answer.
 
-Topic: {state['topic']}
-Coordinator note: {state['coordinator_note']}
-Specialist summaries:
-{bullet_draft}
+    print("Requested tools:", [call["name"] for call in response.tool_calls])
+    return {"research_messages": [response]}
 
-Write:
-1. A short title
-2. Three bullets
-3. One sentence explaining the value of coordinator + specialist agents
-""".strip()
-    log(f"Coordinator finalize prompt:\n{prompt}")
-    response = model.invoke(prompt)
-    final_output = str(response.content)
-    log(f"Coordinator finalize response:\n{final_output}")
-    return {"final_output": final_output}
+
+research_tools = ToolNode(RESEARCH_TOOLS, messages_key="research_messages")
+
+
+def research_summary(state: MagenticState) -> MagenticState:
+    print("3️⃣📚 Research summary")
+    tool_outputs = last_tool_outputs(state["research_messages"])
+    print("Latest tool outputs:")
+    print(tool_outputs)
+
+    model = build_model()
+    response = model.invoke(
+        f"""
+        Topic: {state['topic']}
+        Coordinator instruction: {state['coordinator_note']}
+        Tool outputs:
+        {tool_outputs}
+
+        Write 2 short bullets with the most useful new findings.
+        """.strip()
+    )
+
+    note = str(response.content)
+    print("Research note:")
+    print(note)
+    return {"research_notes": [note]}
+
+
+def planner(state: MagenticState) -> MagenticState:
+    print("2️⃣🗂️ Planner")
+    model = build_model()
+
+    response = model.invoke(
+        f"""
+        Topic: {state['topic']}
+        Coordinator instruction: {state['coordinator_note']}
+
+        Research notes so far:
+        {format_notes(state.get('research_notes'))}
+
+        Write:
+        1. A short working plan
+        2. What is still missing, if anything
+        """.strip()
+    )
+
+    note = str(response.content)
+    print("Plan note:")
+    print(note)
+    return {"plan_notes": [note]}
+
+
+def finish(state: MagenticState) -> MagenticState:
+    print("4️⃣✅ Finish")
+    model = build_model()
+
+    response = model.invoke(
+        f"""
+        Topic: {state['topic']}
+
+        Research notes:
+        {format_notes(state.get('research_notes'))}
+
+        Plan notes:
+        {format_notes(state.get('plan_notes'))}
+
+        Write:
+        1. A short title
+        2. Three slide bullets
+        3. One sentence explaining why iterative orchestration is useful
+        """.strip()
+    )
+
+    return {"final_output": str(response.content)}
 
 
 def build_graph():
-    log("Building magentic graph.")
     graph = StateGraph(MagenticState)
+
     graph.add_node("coordinator", coordinator)
-    graph.add_node("research_specialist", research_specialist)
-    graph.add_node("examples_specialist", examples_specialist)
-    graph.add_node("coordinator_finalize", coordinator_finalize)
+    graph.add_node("researcher", researcher)
+    graph.add_node("research_tools", research_tools)
+    graph.add_node("research_summary", research_summary)
+    graph.add_node("planner", planner)
+    graph.add_node("finish", finish)
+
     graph.add_edge(START, "coordinator")
-    graph.add_edge("coordinator", "research_specialist")
-    graph.add_edge("coordinator", "examples_specialist")
-    graph.add_edge("research_specialist", "coordinator_finalize")
-    graph.add_edge("examples_specialist", "coordinator_finalize")
-    graph.add_edge("coordinator_finalize", END)
-    log("Magentic graph compiled.")
+    graph.add_conditional_edges(
+        "coordinator",
+        route_from_coordinator,
+        {
+            "research": "researcher",
+            "plan": "planner",
+            "finish": "finish",
+        },
+    )
+
+    graph.add_edge("researcher", "research_tools")
+    graph.add_edge("research_tools", "research_summary")
+    graph.add_edge("research_summary", "coordinator")
+    graph.add_edge("planner", "coordinator")
+    graph.add_edge("finish", END)
+
     return graph.compile()
 
 
 if __name__ == "__main__":
-    log("Loading environment variables from .env if present.")
+    print("🚀 Magentic-style demo")
+    print("Path: coordinator -> research or plan -> loop -> finish")
+
     app = build_graph()
-    topic = "LangGraph demo for business teams"
-    log(f"Running graph with topic: {topic}")
-    result = app.invoke({"topic": topic})
-    log("Graph run complete.")
-    log(f"Final state keys: {list(result.keys())}")
-    print("\n=== FINAL OUTPUT ===", flush=True)
+    result = app.invoke({"topic": TOPIC})
+
+    print("\n=== FINAL OUTPUT ===")
     print(result["final_output"])

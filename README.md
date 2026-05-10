@@ -12,6 +12,8 @@ The goal is to keep the code easy to read so you can quickly show:
 - how a graph is constructed
 - how tools are shared across agents
 - how a graph is run
+- how agents automatically request tools through the graph
+- how simple the LangGraph building blocks can be
 
 ## Prerequisites
 
@@ -78,13 +80,14 @@ If you want a different topic, edit the value in the `app.invoke(...)` call at t
 
 ## What Each File Shows
 
-- `sequential_agent.py`: a simple linear flow of `planner -> tool_step -> writer`
-- `parallel_agent.py`: three branches that run independently and merge into `combine`
-- `magentic_agent.py`: a coordinator delegates to two specialists, then finalizes the answer
+- `sequential_agent.py`: one agent asks for tools, one `ToolNode` runs them, and one writer finishes the answer
+- `parallel_agent.py`: three agents run side by side, each one uses its own tool, then one final node combines the results
+- `magentic_agent.py`: a coordinator loops between a researcher and planner until it decides the work is complete
 - `langgraph_tools.py`: shared local tools used by the graphs
 
 ## Notes
 
 - The shared tools are intentionally simple local functions so the graph structure stays easy to follow.
-- The Azure model setup is repeated in each agent file on purpose so it is visible during the demo.
-- Each script prints detailed step-by-step logs in the terminal so you can watch the graph execute live.
+- The Azure model setup is repeated in each agent file on purpose so the file can be read from top to bottom without jumping around.
+- The scripts are intentionally written like tutorials, with only a few nodes and minimal state.
+- Tool execution happens through LangGraph tool-calling flow, not direct Python tool calls inside the agent nodes.

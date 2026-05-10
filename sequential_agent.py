@@ -1,30 +1,34 @@
+"""
+Sequential demo:
+1. The model decides which tools to call.
+2. LangGraph runs those tools.
+3. The model writes the final answer.
+"""
+
 import os
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
 
-from langgraph_tools import format_slide_bullets, get_demo_examples, get_topic_outline
+from langgraph_tools import get_demo_examples, get_topic_outline
 
 load_dotenv()
+
+TOOLS = [get_topic_outline, get_demo_examples]
+MESSAGES = Annotated[list, add_messages]
 
 
 class SequentialState(TypedDict, total=False):
     topic: str
-    meeting_goal: str
-    outline: list[str]
-    examples: list[str]
-    tool_output: str
+    messages: MESSAGES
     final_output: str
 
 
-def log(message: str) -> None:
-    print(f"[sequential] {message}", flush=True)
-
-
 def build_model() -> AzureChatOpenAI:
-    log("Checking Azure OpenAI environment variables.")
     required_env = [
         "AZURE_OPENAI_API_KEY",
         "AZURE_OPENAI_ENDPOINT",
@@ -35,92 +39,91 @@ def build_model() -> AzureChatOpenAI:
     if missing:
         raise ValueError(f"Missing environment variables: {', '.join(missing)}")
 
-    log("Creating AzureChatOpenAI client.")
     return AzureChatOpenAI(
         azure_deployment=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT"],
         api_version=os.environ["AZURE_OPENAI_API_VERSION"],
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         api_key=os.environ["AZURE_OPENAI_API_KEY"],
-        temperature=0,
     )
 
 
+def collect_tool_outputs(messages: list) -> str:
+    outputs = []
+    for message in messages:
+        if message.__class__.__name__ == "ToolMessage":
+            outputs.append(f"{message.name}: {message.content}")
+    return "\n".join(outputs)
+
+
+# Node 1: Ask the model which tools it wants to use and with what inputs.
 def planner(state: SequentialState) -> SequentialState:
-    log("Planner node started.")
-    log(f"Planner received topic: {state['topic']}")
-    model = build_model()
-    prompt = (
-        "Write one short meeting goal for this presentation topic.\n"
-        f"Topic: {state['topic']}"
+    print("1️⃣ 🤖 Planner")
+    model = build_model().bind_tools(TOOLS, tool_choice="required")
+
+    steering_prompt = f"You should always call the tool with the string 'For a team of engineers: {state['topic']}' as input."
+    response = model.invoke(
+        f"""
+        Topic: {state['topic']}
+        
+        Call both tools so we can build a short presentation brief.
+        Do not answer the user yet.
+        """.strip()
     )
-    log(f"Planner prompt:\n{prompt}")
-    response = model.invoke(prompt)
-    meeting_goal = str(response.content)
-    log(f"Planner response: {meeting_goal}")
-    return {"meeting_goal": meeting_goal}
+
+    print("Requested tools:", [call["name"] for call in response.tool_calls])
+    return {"messages": [response]}
 
 
-def tool_step(state: SequentialState) -> SequentialState:
-    log("Tool step started.")
-    outline = get_topic_outline.invoke({"topic": state["topic"]})
-    log(f"Tool step outline: {outline}")
-    examples = get_demo_examples.invoke({"topic": state["topic"]})
-    log(f"Tool step examples: {examples}")
-    tool_output = format_slide_bullets.invoke(
-        {"items": [state["meeting_goal"], *outline[:2], examples[0]]}
-    )
-    log(f"Tool step formatted output:\n{tool_output}")
-    return {
-        "outline": outline,
-        "examples": examples,
-        "tool_output": tool_output,
-    }
+# Node 2: LangGraph ToolNode runs the requested tools automatically.
+tools = ToolNode(TOOLS)
 
 
+# Node 3: use the tool results to write the final answer.
 def writer(state: SequentialState) -> SequentialState:
-    log("Writer node started.")
+    print("3️⃣ 📝 Writer")
+    tool_outputs = collect_tool_outputs(state["messages"])
+    print("Tool outputs:")
+    print(tool_outputs)
+
     model = build_model()
-    prompt = f"""
-You are writing a very short meeting brief.
+    response = model.invoke(
+        f"""
+        Topic: {state['topic']}
+        Tool outputs:
+        {tool_outputs}
 
-Topic: {state['topic']}
-Goal: {state['meeting_goal']}
-Tool output:
-{state['tool_output']}
+        Write:
+        1. A short title
+        2. Three slide bullets
+        3. One sentence on why this demo matters
+        """.strip()
+    )
 
-Write:
-1. A short title
-2. Three slide bullets
-3. One sentence on why this demo matters
-""".strip()
-    log(f"Writer prompt:\n{prompt}")
-    response = model.invoke(prompt)
-    final_output = str(response.content)
-    log(f"Writer response:\n{final_output}")
-    return {"final_output": final_output}
+    return {"final_output": str(response.content)}
 
 
 def build_graph():
-    log("Building sequential graph.")
     graph = StateGraph(SequentialState)
+
     graph.add_node("planner", planner)
-    graph.add_node("tool_step", tool_step)
+    graph.add_node("tools", tools)
     graph.add_node("writer", writer)
+
     graph.add_edge(START, "planner")
-    graph.add_edge("planner", "tool_step")
-    graph.add_edge("tool_step", "writer")
+    graph.add_edge("planner", "tools")
+    graph.add_edge("tools", "writer")
     graph.add_edge("writer", END)
-    log("Sequential graph compiled.")
+
     return graph.compile()
 
 
 if __name__ == "__main__":
-    log("Loading environment variables from .env if present.")
+    print("🚀 Sequential demo")
+    print("Path: 1️⃣ planner -> 2️⃣ tools -> 3️⃣ writer")
+
     app = build_graph()
-    topic = "LangGraph demo for business teams"
-    log(f"Running graph with topic: {topic}")
+    topic = "LangGraph demo"
     result = app.invoke({"topic": topic})
-    log("Graph run complete.")
-    log(f"Final state keys: {list(result.keys())}")
-    print("\n=== FINAL OUTPUT ===", flush=True)
+
+    print("\n=== FINAL OUTPUT ===")
     print(result["final_output"])
