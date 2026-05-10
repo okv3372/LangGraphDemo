@@ -25,7 +25,6 @@ load_dotenv()
 TOPIC = "LangGraph demo for business teams"
 MESSAGES = Annotated[list, add_messages]
 
-
 class ParallelState(TypedDict, total=False):
     topic: str
     outline_messages: MESSAGES
@@ -62,7 +61,7 @@ def last_tool_output(messages: list) -> str:
 
 
 def outline_agent(state: ParallelState) -> ParallelState:
-    print("1️⃣🟦 Outline agent")
+    print("1️⃣ 🟦 Outline agent")
     model = build_model().bind_tools([get_topic_outline], tool_choice="required")
     response = model.invoke(
         f"""
@@ -76,7 +75,7 @@ def outline_agent(state: ParallelState) -> ParallelState:
 
 
 def examples_agent(state: ParallelState) -> ParallelState:
-    print("1️⃣🟩 Examples agent")
+    print("1️⃣ 🟩 Examples agent")
     model = build_model().bind_tools([get_demo_examples], tool_choice="required")
     response = model.invoke(
         f"""
@@ -90,7 +89,7 @@ def examples_agent(state: ParallelState) -> ParallelState:
 
 
 def questions_agent(state: ParallelState) -> ParallelState:
-    print("1️⃣🟨 Questions agent")
+    print("1️⃣ 🟨 Questions agent")
     model = build_model().bind_tools([get_audience_questions], tool_choice="required")
     response = model.invoke(
         f"""
@@ -109,7 +108,7 @@ questions_tools = ToolNode([get_audience_questions], messages_key="questions_mes
 
 
 def combine(state: ParallelState) -> ParallelState:
-    print("2️⃣🤝 Combine")
+    print("2️⃣ Combine")
 
     outline = last_tool_output(state["outline_messages"])
     examples = last_tool_output(state["examples_messages"])

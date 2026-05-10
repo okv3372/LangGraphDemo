@@ -8,12 +8,13 @@ Magentic-style demo:
 
 import os
 from operator import add
-from typing import Annotated, TypedDict
+from typing import Annotated, Literal, TypedDict
 
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
+from pydantic import BaseModel
 
 from langgraph_tools import (
     get_audience_questions,
@@ -24,7 +25,7 @@ from langgraph_tools import (
 load_dotenv()
 
 TOPIC = "LangGraph demo for business teams"
-MAX_ROUNDS = 4
+MAX_ROUNDS = 6
 RESEARCH_TOOLS = [get_topic_outline, get_demo_examples, get_audience_questions]
 NOTES = Annotated[list[str], add]
 
@@ -38,6 +39,11 @@ class MagenticState(TypedDict, total=False):
     research_notes: NOTES
     plan_notes: NOTES
     final_output: str
+
+
+class CoordinatorDecision(BaseModel):
+    step: Literal["research", "plan", "finish"]
+    note: str
 
 
 def build_model() -> AzureChatOpenAI:
@@ -74,25 +80,9 @@ def last_tool_outputs(messages: list) -> str:
     return "\n".join(outputs)
 
 
-def parse_coordinator_response(text: str) -> tuple[str, str]:
-    step = "finish"
-    note = text.strip()
-
-    for line in text.splitlines():
-        if line.upper().startswith("STEP:"):
-            step = line.split(":", 1)[1].strip().lower()
-        if line.upper().startswith("NOTE:"):
-            note = line.split(":", 1)[1].strip()
-
-    if step not in {"research", "plan", "finish"}:
-        step = "finish"
-
-    return step, note
-
-
 def coordinator(state: MagenticState) -> MagenticState:
     round_number = state.get("round_count", 0) + 1
-    print(f"1️⃣🎯 Coordinator (round {round_number})")
+    print(f"🎯 Coordinator (round {round_number})")
 
     if round_number > MAX_ROUNDS:
         print("Max rounds reached. Finishing with current notes.")
@@ -102,8 +92,8 @@ def coordinator(state: MagenticState) -> MagenticState:
             "coordinator_note": "We have enough information. Finish the answer.",
         }
 
-    model = build_model()
-    response = model.invoke(
+    model = build_model().with_structured_output(CoordinatorDecision)
+    decision = model.invoke(
         f"""
         You are coordinating a small research workflow.
 
@@ -116,25 +106,24 @@ def coordinator(state: MagenticState) -> MagenticState:
         Plan notes so far:
         {format_notes(state.get('plan_notes'))}
 
+        Always start with a planning round.
+        You should always do at least two rounds of research/planning before finishing.
+        Each round of research should be followed by a round of planning to organize the findings.
+        Never do more than one round of planning in a row.
+
         Choose the next step:
         - research: gather more information
         - plan: organize the information and identify gaps
         - finish: stop when the work is complete
-
-        Reply in exactly this format:
-        STEP: research OR plan OR finish
-        NOTE: one short instruction for the next node
         """.strip()
     )
 
-    step, note = parse_coordinator_response(str(response.content))
-    print("Coordinator decision:", step)
-    print("Coordinator note:", note)
+    print("Structured decision:", decision.step)
 
     return {
         "round_count": round_number,
-        "next_step": step,
-        "coordinator_note": note,
+        "next_step": decision.step,
+        "coordinator_note": decision.note,
     }
 
 
@@ -143,7 +132,7 @@ def route_from_coordinator(state: MagenticState) -> str:
 
 
 def researcher(state: MagenticState) -> MagenticState:
-    print("2️⃣🔎 Researcher")
+    print("🔎 Researcher")
     model = build_model().bind_tools(RESEARCH_TOOLS, tool_choice="required")
 
     response = model.invoke(
@@ -167,7 +156,7 @@ research_tools = ToolNode(RESEARCH_TOOLS, messages_key="research_messages")
 
 
 def research_summary(state: MagenticState) -> MagenticState:
-    print("3️⃣📚 Research summary")
+    print("📚 Research summary")
     tool_outputs = last_tool_outputs(state["research_messages"])
     print("Latest tool outputs:")
     print(tool_outputs)
@@ -191,7 +180,7 @@ def research_summary(state: MagenticState) -> MagenticState:
 
 
 def planner(state: MagenticState) -> MagenticState:
-    print("2️⃣🗂️ Planner")
+    print("🗂️ Planner")
     model = build_model()
 
     response = model.invoke(
@@ -215,7 +204,7 @@ def planner(state: MagenticState) -> MagenticState:
 
 
 def finish(state: MagenticState) -> MagenticState:
-    print("4️⃣✅ Finish")
+    print("✅ Finish")
     model = build_model()
 
     response = model.invoke(

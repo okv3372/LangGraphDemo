@@ -82,7 +82,7 @@ If you want a different topic, edit the value in the `app.invoke(...)` call at t
 
 - `sequential_agent.py`: one agent asks for tools, one `ToolNode` runs them, and one writer finishes the answer
 - `parallel_agent.py`: three agents run side by side, each one uses its own tool, then one final node combines the results
-- `magentic_agent.py`: a coordinator loops between a researcher and planner until it decides the work is complete
+- `magentic_agent.py`: a coordinator uses structured output to choose `research`, `plan`, or `finish`, then loops until it decides the work is complete
 - `langgraph_tools.py`: shared local tools used by the graphs
 
 ## Notes
@@ -91,3 +91,4 @@ If you want a different topic, edit the value in the `app.invoke(...)` call at t
 - The Azure model setup is repeated in each agent file on purpose so the file can be read from top to bottom without jumping around.
 - The scripts are intentionally written like tutorials, with only a few nodes and minimal state.
 - Tool execution happens through LangGraph tool-calling flow, not direct Python tool calls inside the agent nodes.
+- The magentic demo also shows `with_structured_output(...)` for coordinator routing decisions.

@@ -1,5 +1,5 @@
 """
-Sequential demo:
+Sequential agent:
 1. The model decides which tools to call.
 2. LangGraph runs those tools.
 3. The model writes the final answer.
@@ -71,6 +71,7 @@ def planner(state: SequentialState) -> SequentialState:
     )
 
     print("Requested tools:", [call["name"] for call in response.tool_calls])
+    print("2️⃣ Tool node")
     return {"messages": [response]}
 
 
