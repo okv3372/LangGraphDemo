@@ -13,22 +13,12 @@ from typing import Annotated, Literal, TypedDict
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI
 from langgraph.graph import END, START, StateGraph
-from langgraph.prebuilt import ToolNode
-from pydantic import BaseModel
-
-from langgraph_tools import (
-    get_audience_questions,
-    get_demo_examples,
-    get_topic_outline,
-)
 
 load_dotenv()
 
-TOPIC = "LangGraph demo for business teams"
+TOPIC = "LangGraph's use for building agents"
 MAX_ROUNDS = 6
-RESEARCH_TOOLS = [get_topic_outline, get_demo_examples, get_audience_questions]
 NOTES = Annotated[list[str], add]
-
 
 class MagenticState(TypedDict, total=False):
     topic: str
@@ -41,7 +31,7 @@ class MagenticState(TypedDict, total=False):
     final_output: str
 
 
-class CoordinatorDecision(BaseModel):
+class CoordinatorDecision(TypedDict):
     step: Literal["research", "plan", "finish"]
     note: str
 
@@ -99,6 +89,7 @@ def coordinator(state: MagenticState) -> MagenticState:
 
         Topic: {state['topic']}
         Round: {round_number} of {MAX_ROUNDS}
+        Previous step: {state.get('next_step', 'Start')}
 
         Research notes so far:
         {format_notes(state.get('research_notes'))}
@@ -107,8 +98,8 @@ def coordinator(state: MagenticState) -> MagenticState:
         {format_notes(state.get('plan_notes'))}
 
         Always start with a planning round.
-        You should always do at least two rounds of research/planning before finishing.
         Each round of research should be followed by a round of planning to organize the findings.
+        You should always do at least two rounds of research before finishing.
         Never do more than one round of planning in a row.
 
         Choose the next step:
@@ -118,12 +109,12 @@ def coordinator(state: MagenticState) -> MagenticState:
         """.strip()
     )
 
-    print("Structured decision:", decision.step)
+    print("Structured decision:", decision["step"])
 
     return {
         "round_count": round_number,
-        "next_step": decision.step,
-        "coordinator_note": decision.note,
+        "next_step": decision["step"],
+        "coordinator_note": decision["note"],
     }
 
 
@@ -133,50 +124,43 @@ def route_from_coordinator(state: MagenticState) -> str:
 
 def researcher(state: MagenticState) -> MagenticState:
     print("🔎 Researcher")
-    model = build_model().bind_tools(RESEARCH_TOOLS, tool_choice="required")
+    model = build_model()
 
     response = model.invoke(
         f"""
+        You are a helpful researcher. Your goal is to provide information about the given topic.
+
         Topic: {state['topic']}
         Coordinator instruction: {state['coordinator_note']}
 
         Research notes so far:
         {format_notes(state.get('research_notes'))}
-
-        Call one or more tools to gather the next useful information.
-        Do not write the final answer.
         """.strip()
     )
 
-    print("Requested tools:", [call["name"] for call in response.tool_calls])
+    print("Researcher response:")
+    print(response.content)
+
     return {"research_messages": [response]}
-
-
-research_tools = ToolNode(RESEARCH_TOOLS, messages_key="research_messages")
-
 
 def research_summary(state: MagenticState) -> MagenticState:
     print("📚 Research summary")
-    tool_outputs = last_tool_outputs(state["research_messages"])
-    print("Latest tool outputs:")
-    print(tool_outputs)
 
     model = build_model()
     response = model.invoke(
         f"""
+        You are a research summarizer. Your goal is to read through the most recent research messages and summarize the most useful findings in a concise way.
+        Write 2 short bullets with the most useful new findings given the following topic and coordinator instructions:
+
         Topic: {state['topic']}
         Coordinator instruction: {state['coordinator_note']}
-        Tool outputs:
-        {tool_outputs}
-
-        Write 2 short bullets with the most useful new findings.
+        Research messages: {state['research_messages']}
         """.strip()
     )
 
-    note = str(response.content)
-    print("Research note:")
-    print(note)
-    return {"research_notes": [note]}
+    print("Research summarization:")
+    print(response.content)
+    return {"research_notes": [response.content]}
 
 
 def planner(state: MagenticState) -> MagenticState:
@@ -191,9 +175,8 @@ def planner(state: MagenticState) -> MagenticState:
         Research notes so far:
         {format_notes(state.get('research_notes'))}
 
-        Write:
-        1. A short working plan
-        2. What is still missing, if anything
+        Give a list of 1-2 more things to research based on the research notes, and any planning thoughts you have about how to organize the information or identify gaps.
+        Make your response short and sweet - just a few bullets. Do not write the final answer.
         """.strip()
     )
 
@@ -217,10 +200,10 @@ def finish(state: MagenticState) -> MagenticState:
         Plan notes:
         {format_notes(state.get('plan_notes'))}
 
-        Write:
-        1. A short title
-        2. Three slide bullets
-        3. One sentence explaining why iterative orchestration is useful
+        Write a research report about:
+        1. A final summary of the findings based on the research and plan notes.
+        2. A reflection on the research process and how the notes evolved over time.
+        3. Any remaining gaps or questions that could be explored in the future.
         """.strip()
     )
 
@@ -232,7 +215,6 @@ def build_graph():
 
     graph.add_node("coordinator", coordinator)
     graph.add_node("researcher", researcher)
-    graph.add_node("research_tools", research_tools)
     graph.add_node("research_summary", research_summary)
     graph.add_node("planner", planner)
     graph.add_node("finish", finish)
@@ -248,8 +230,7 @@ def build_graph():
         },
     )
 
-    graph.add_edge("researcher", "research_tools")
-    graph.add_edge("research_tools", "research_summary")
+    graph.add_edge("researcher", "research_summary")
     graph.add_edge("research_summary", "coordinator")
     graph.add_edge("planner", "coordinator")
     graph.add_edge("finish", END)

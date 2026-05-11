@@ -72,18 +72,12 @@ Run the magentic-style graph:
 python3 magentic_agent.py
 ```
 
-Each script uses the same sample topic:
-
-`LangGraph demo for business teams`
-
-If you want a different topic, edit the value in the `app.invoke(...)` call at the bottom of each file.
-
 ## What Each File Shows
 
 - `sequential_agent.py`: one agent asks for tools, one `ToolNode` runs them, and one writer finishes the answer
 - `parallel_agent.py`: three agents run side by side, each one uses its own tool, then one final node combines the results
 - `magentic_agent.py`: a coordinator uses structured output to choose `research`, `plan`, or `finish`, then loops until it decides the work is complete
-- `langgraph_tools.py`: shared local tools used by the graphs
+- `langgraph_tools.py`: shared local tools used by the graphs, the comments in each tool can steer the tool choice of the model
 
 ## Notes
 
