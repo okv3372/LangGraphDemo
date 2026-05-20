@@ -139,7 +139,7 @@ def researcher(state: MagenticState) -> MagenticState:
     )
 
     print("Researcher response:")
-    print(response.content)
+    print(response.content[:200])
 
     return {"research_messages": [response]}
 
@@ -159,7 +159,7 @@ def research_summary(state: MagenticState) -> MagenticState:
     )
 
     print("Research summarization:")
-    print(response.content)
+    print(response.content  + " ...")
     return {"research_notes": [response.content]}
 
 
